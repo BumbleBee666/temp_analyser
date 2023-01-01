@@ -1,2 +1,2 @@
 #!/bin/sh
-java -jar target/SpeedAnalyser-1.0-SNAPSHOT.jar ./
+java -jar target/TempAnalyser-1.0-SNAPSHOT.jar ./
