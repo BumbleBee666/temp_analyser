@@ -1,5 +1,6 @@
 package sixthform;
 
+import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
@@ -14,22 +15,18 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.TreeMap;
 
-import org.json.simple.JSONObject;
-import org.json.simple.parser.JSONParser;
-import org.json.simple.parser.ParseException;
-
 public class Data
 {
     private Map<String,Path> processedFiles = new TreeMap<>();
-    private Map<String,JSONObject> bandwidthData = new TreeMap<>();
+    private Map<String,Map<String,Integer>> temperatureData = new TreeMap<>();
     private Properties config;
-    
+
     public Data(Properties config)
     {
         this.config = config;
 
         // Setup a timer to run once a minute.
-        Timer timer = new Timer("Timer");        
+        Timer timer = new Timer("Timer");
         long delay = 0L;
         long period = 60000L;
         timer.schedule(task, delay, period);
@@ -48,9 +45,9 @@ public class Data
         }
     }
 
-    private TimerTask task = new TimerTask() 
+    private TimerTask task = new TimerTask()
     {
-        public void run() 
+        public void run()
         {
             // We need to look for new files.
             Map<String,Path> newFiles = GetNewFiles();
@@ -75,71 +72,142 @@ public class Data
         }
     };
 
-    public Map<String, Long> GetAverageBandwidthByTime()
+    private String transformDate(String date)
     {
-        // Organise data into buckets by time.
-        Map<String, List<Long>> bandwidthByTime = new TreeMap<>();
-        synchronized(bandwidthData)
-        {
-            for (String timestamp : bandwidthData.keySet())
-            {
-                JSONObject download = (JSONObject) bandwidthData.get(timestamp).get("download");
-                Long bandwidth = ((Long) download.get("bandwidth")) / 125000L;
-
-                String time = timestamp.substring(8);
-                List<Long> bandwidthsForTime = bandwidthByTime.containsKey(time) ? bandwidthByTime.get(time) : new ArrayList<Long>();
-                bandwidthsForTime.add(bandwidth);
-                bandwidthByTime.put(time, bandwidthsForTime);
-            }
-        }
-
-        // Calculate average for each time bucket.
-        Map<String, Long> averageBandwidthByTime = new TreeMap<>();
-        for (String time : bandwidthByTime.keySet())
-        {
-            Long bandwidthTotal = 0L;
-            for (Long bandwidth : bandwidthByTime.get(time))
-                bandwidthTotal += bandwidth;
-            averageBandwidthByTime.put(time, bandwidthTotal / bandwidthByTime.get(time).size());
-        }
-        return averageBandwidthByTime;
+        return date.substring(6) + date.substring(3,5) + date.substring(0,2);
     }
 
-    private void ProcessFile(Path path)
+    /*
+     * Returns map of YYYYMMDDhhss -> sensor -> temp
+     */
+    public Map<String, Map<String,Double>> GetTemperatureByTime(String startDate, String endDate)
     {
-        JSONParser parser = new JSONParser();
-        try
+        // Expects date in format dd-mm-yyyy.
+        Long filterStartDate = Long.parseLong(transformDate(startDate));
+        Long filterEndDate = Long.parseLong(transformDate(endDate));
+
+        Map<String, Map<String,Double>> temperatureByTime = new TreeMap<>();
+        synchronized(temperatureData)
         {
-            JSONObject data = (JSONObject) parser.parse(new FileReader(path.toAbsolutePath().toString()));
-            if (data != null)
+            for (String timestamp : temperatureData.keySet())
             {
-                String timestamp = (String) data.get("timestamp");
-                if (timestamp != null)
+                // Filter by date.
+                Long date = Long.parseLong(timestamp.substring(0,8));
+                if (date >= filterStartDate && date <= filterEndDate)
                 {
-                    timestamp = timestamp.substring(0,4) + timestamp.substring(5,7) + timestamp.substring(8,10) + timestamp.substring(11,13) + timestamp.substring(14,16);
-                    synchronized(bandwidthData)
+                    Map<String,Double> temperatures = new TreeMap<>();
+                    for (String sensor : temperatureData.get(timestamp).keySet())
                     {
-                        bandwidthData.put(timestamp, data);
+                        Double temp = temperatureData.get(timestamp).get(sensor).doubleValue() / 100.0;
+                        temperatures.put(sensor,temp);
+                    }
+
+                    temperatureByTime.put(timestamp, temperatures);
+                }
+            }
+        }
+        return temperatureByTime;
+    }
+
+    /*
+     * Returns map of hhss -> sensor -> temp
+     */
+    public Map<String, Map<String, HighLowAverage>> GetAverageTemperatureByTime(String startDate, String endDate)
+    {
+        // Expects date in format dd-mm-yyyy.
+        Long filterStartDate = Long.parseLong(transformDate(startDate));
+        Long filterEndDate = Long.parseLong(transformDate(endDate));
+
+        Map<String, Map<String,List<Double>>> temperaturesByTime = new TreeMap<>();
+        synchronized(temperatureData)
+        {
+            for (String timestamp : temperatureData.keySet())
+            {
+                // Filter by date.
+                Long date = Long.parseLong(timestamp.substring(0,8));
+                if (date >= filterStartDate && date <= filterEndDate)
+                {
+                    String time = timestamp.substring(8);
+
+                    Map<String,List<Double>> sensorTemps = temperaturesByTime.containsKey(time) ? temperaturesByTime.get(time) : new TreeMap<>();
+                    temperaturesByTime.put(time, sensorTemps);
+
+                    for (String sensor : temperatureData.get(timestamp).keySet())
+                    {
+                        List<Double> temperatures = sensorTemps.containsKey(sensor) ? sensorTemps.get(sensor) : new ArrayList<>();
+                        sensorTemps.put(sensor, temperatures);
+
+                        Double temp = temperatureData.get(timestamp).get(sensor).doubleValue() / 100.0;
+                        temperatures.add(temp);
                     }
                 }
             }
         }
-        catch (ParseException e)
+        
+        Map<String, Map<String, HighLowAverage>> temperatureByTime = new TreeMap<>();
+        for (String time : temperaturesByTime.keySet())
         {
-            // We expect these to occur where there is no result in the file.
+            Map<String, HighLowAverage> timeSensorsHLA = new TreeMap<>();
+            temperatureByTime.put(time, timeSensorsHLA);
+
+            for (String sensor : temperaturesByTime.get(time).keySet())
+            {
+                Double high = Double.MIN_VALUE, low = Double.MAX_VALUE, average = 0.0;
+                for (Double temp : temperaturesByTime.get(time).get(sensor))
+                {
+                    if (temp > high) high = temp;
+                    if (temp < low) low = temp;
+                    average += temp;
+                }
+                average = average / temperaturesByTime.get(time).get(sensor).size();
+
+                timeSensorsHLA.put(sensor, new HighLowAverage(high, low, average));
+            }
         }
-        catch (IOException e) 
+
+        return temperatureByTime;
+    }
+
+    private void ProcessFile(Path path)
+    {
+        Map<String,Integer> records = new TreeMap<>();
+        try (BufferedReader br = new BufferedReader(new FileReader(path.toAbsolutePath().toString())))
+        {
+            String line;
+            while ((line = br.readLine()) != null) 
+            {
+                String[] values = line.split(",");
+                if (values.length == 2)
+                    records.put(values[0].trim(),Integer.parseInt(values[1]));
+            }
+        }    
+        catch (IOException e)
         {
             System.out.println(e.getMessage());
+        }
+
+        if (records.size() > 0)
+        {
+            String timestamp = path.getFileName().toString();
+            timestamp = timestamp.substring(5,timestamp.length()-4);
+            if (timestamp != null)
+            {
+                // Convert timestamp from YYYYMMDD-hh:mm:ss -> YYYYMMDDhhmm
+                timestamp = timestamp.substring(0,8) + timestamp.substring(9,11) + timestamp.substring(12,14);
+                synchronized(temperatureData)
+                {
+                    temperatureData.put(timestamp, records);
+                }
+            }
         }
     }
 
     private Map<String,Path> GetNewFiles()
     {
         Map<String,Path> newFiles = new TreeMap<>();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(config.getProperty("datafiles.location")))) 
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(config.getProperty("datafiles.location"))))
         {
-            for (Path path : stream) 
+            for (Path path : stream)
             {
                 String filename = path.getFileName().toString();
                 if (!Files.isDirectory(path) && filename.matches(config.getProperty("datafiles.filter")) && !processedFiles.containsKey(filename))
