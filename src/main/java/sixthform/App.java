@@ -19,7 +19,15 @@ public class App
             ReadConfig(args);
 
             // Load data into database.
-            Data data = new Data(config);
+            Data data = null;
+            if (config.getProperty("data.type").contentEquals("bandwidth"))
+            {
+                data = new BandwidthData(config);
+            }
+            else
+            {
+                data = new TemperatureData(config);
+            }
 
             // Display the data.
             Chart chart = new Chart(config, data);

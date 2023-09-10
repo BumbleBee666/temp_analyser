@@ -1,8 +1,6 @@
 package sixthform;
 
-import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
@@ -36,9 +34,8 @@ import org.jfree.data.time.ohlc.OHLCSeriesCollection;
 import org.jfree.data.xy.AbstractXYDataset;
 import org.jfree.data.xy.OHLCDataset;
 import org.jfree.data.xy.XYDataset;
-import org.jfree.data.xy.XYSeriesCollection;
 
-public class Chart extends ApplicationFrame implements Data.DataListener
+public class Chart extends ApplicationFrame implements TemperatureData.DataListener
 {
 
    private Properties config;
@@ -79,7 +76,7 @@ public class Chart extends ApplicationFrame implements Data.DataListener
       this.config = config;
       this.data = data;
 
-      String[] chartTypes = { "Average", "Today" };
+      String[] chartTypes = { "Average", "Week", "Today" };
       chartType = new JComboBox<>(chartTypes);
       chartType.setSelectedIndex(0);
       chartType.addActionListener((ActionEvent e) -> {
@@ -145,7 +142,7 @@ public class Chart extends ApplicationFrame implements Data.DataListener
                (OHLCDataset)createDataset(),
                true);
             break;
-         case 1 :
+         case 1,2 :
             chart = ChartFactory.createTimeSeriesChart(
                config.getProperty("chart.chartTitle"),
                config.getProperty("chart.h_title"),
@@ -185,14 +182,19 @@ public class Chart extends ApplicationFrame implements Data.DataListener
       {
          case 0 :
             {
-               Map<String,Map<String,HighLowAverage>> temperatureData = data.GetAverageTemperatureByTime(startDate(), endDate());
+               Map<String,Map<String,HighLowAverage>> temperatureData = data.GetAverageByTime(startDate(), endDate());
                if (temperatureData != null)
                {
                   OHLCSeriesCollection tsDataset = new OHLCSeriesCollection();
                   Map<String, OHLCSeries> seriesList = new TreeMap<>();
                   for (String timestamp : temperatureData.keySet())
                   {
-                     Minute minute = new Minute(Integer.parseInt(timestamp.substring(2,4)), Integer.parseInt(timestamp.substring(0,2)), 1, 1, 1900);
+                     Integer mm = Integer.parseInt(timestamp.substring(2,4));
+                     Integer hh = Integer.parseInt(timestamp.substring(0,2));
+                     Integer DD = 1;
+                     Integer MM = 1;
+                     Integer YYYY = 1900;
+                     Minute minute = new Minute(mm, hh, DD, MM, YYYY);
                      for (String sensor : temperatureData.get(timestamp).keySet())
                      {
                         OHLCSeries series = seriesList.containsKey(sensor) ? seriesList.get(sensor) : new OHLCSeries(sensor);
@@ -212,7 +214,38 @@ public class Chart extends ApplicationFrame implements Data.DataListener
             break;
          case 1 :
             {
-               Map<String,Map<String,Double>> temperatureData = data.GetTemperatureByTime(startDate(), endDate());
+               Map<String,Map<String,HighLowAverage>> temperatureData = data.GetAverageByDoWTime(startDate(), endDate());
+               if (temperatureData != null)
+               {
+                  TimeSeriesCollection tsDataset = new TimeSeriesCollection();
+                  Map<String, TimeSeries> seriesList = new TreeMap<>();
+                  for (String timestamp : temperatureData.keySet())
+                  {
+                     Integer mm = Integer.parseInt(timestamp.substring(3,5));
+                     Integer hh = Integer.parseInt(timestamp.substring(1,3));
+                     Integer DD = Integer.parseInt(timestamp.substring(0,1));
+                     Integer MM = 1;
+                     Integer YYYY = 1900;
+                     Minute minute = new Minute(mm, hh, DD, MM, YYYY);
+                     for (String sensor : temperatureData.get(timestamp).keySet())
+                     {
+                        TimeSeries series = seriesList.containsKey(sensor) ? seriesList.get(sensor) : new TimeSeries(sensor);
+                        seriesList.put(sensor, series);
+
+                        series.add(minute, temperatureData.get(timestamp).get(sensor).Average());
+                     }
+                  }
+                  for (TimeSeries series : seriesList.values())
+                  {
+                     tsDataset.addSeries(series);
+                  }
+                  dataset = tsDataset;
+               }
+            }
+            break;
+         case 2 :
+            {
+               Map<String,Map<String,Double>> temperatureData = data.GetByTime(startDate(), endDate());
                if (temperatureData != null)
                {
                   TimeSeriesCollection tsDataset = new TimeSeriesCollection();
